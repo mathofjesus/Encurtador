@@ -1,0 +1,39 @@
+# Application configuration.
+#
+# Values here are sized for the target machine: 1 vCPU, 4 GB RAM, 50 GB disk.
+# The database pool is deliberately small. On one core, more threads buy context
+# switching rather than parallelism, and 16 threads would also exceed what
+# Postgres's max_connections is set to accept.
+app:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+  base_url: "https://short.ly"
+
+database:
+  # Container names, because the sandbox puts postgres and the app on a shared
+  # docker network. A local run overrides these with TEST_DATABASE_URL.
+  primary_dsn: "postgresql://shortener:shortener@shortener-pg:5432/shortener"
+  replica_dsn: "postgresql://shortener:shortener@shortener-pg:5432/shortener"
+  pool_size: 2
+  max_overflow: 2
+
+cache:
+  redis_url: "redis://shortener-redis:6379/0"
+  # 24 hours. Every entry carries a TTL, so the sandbox sets Redis to evict with
+  # volatile-ttl: only keys that were going to expire anyway get dropped.
+  redis_ttl_seconds: 86400
+
+codegen:
+  min_length: 7
+  max_length: 12
+
+rate_limit:
+  per_minute: 60
+  burst: 10
+
+retention:
+  # The requirement asks for ten years of storage. The cleanup job honours this;
+  # the 50 GB disk cannot, which docs/LOAD_TEST_RESULTS.md measures.
+  default_ttl_days: 3650
+  max_ttl_days: 3650
