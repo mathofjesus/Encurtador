@@ -56,12 +56,15 @@ $(BUILD_DIR) $(BIN_DIR):
 $(BUILD_DIR)/%: $(TEST_DIR)/%.c $(LIB_OBJ) | $(BUILD_DIR)
 	$(CC) $(ALL_CFLAGS) $< $(LIB_OBJ) -o $@ $(LDFLAGS) $(TEST_LIBS)
 
-# Criterion runs each test in its own process, in parallel by default. The
-# database and cache tests share one Postgres and one Redis, so in parallel they
-# race on the same DDL — CREATE TABLE IF NOT EXISTS still loses that race — and
-# 14 processes of pool-of-2 blows past Postgres's max_connections of 20. These
-# binaries are run with -j1.
-TEST_SHARED := build/test_pg build/test_redis
+# Criterion runs each test in its own process, in parallel by default. Three
+# reasons these binaries are serial:
+#   - test_pg / test_redis share one Postgres and one Redis. In parallel they
+#     race on the same DDL (CREATE TABLE IF NOT EXISTS still loses that race) and
+#     14 processes of pool-of-2 blows past Postgres's max_connections of 20.
+#   - test_reactor is timing-sensitive. Several processes polling on the same
+#     0.35-core share starve each other, and a poll budget that is generous alone
+#     becomes too short.
+TEST_SHARED := build/test_pg build/test_redis build/test_reactor
 
 test: $(TEST_BIN)
 	@if [ -z "$(strip $(TEST_BIN))" ]; then \

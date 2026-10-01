@@ -14,7 +14,6 @@
 typedef struct {
     char *data;
     size_t len;
-    size_t cap;
 } buf_t;
 
 /* Allocates a buffer with room for cap bytes. Returns NULL on allocation
