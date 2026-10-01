@@ -1,5 +1,6 @@
 CC      ?= gcc
-CFLAGS  ?= -std=c11 -Wall -Wextra -O2 -g -D_GNU_SOURCE
+# -Isrc lets sources include "util/buf.h" rather than "../../util/buf.h".
+CFLAGS  ?= -std=c11 -Wall -Wextra -O2 -g -D_GNU_SOURCE -Isrc
 LDFLAGS ?=
 
 # The library sandbox installs the same set.

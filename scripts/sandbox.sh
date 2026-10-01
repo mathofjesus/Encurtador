@@ -202,6 +202,57 @@ cmd_test_disk() {
   MAKE_CMD="make test-disk" run_in_builder "$DISK_FULL"
 }
 
+# Task 1 requires a leak check; Task 2 requires a sanitizer build. Valgrind is
+# not in Debian trixie-slim's default set, so it is installed here rather than
+# assumed. ASan needs the same libs.
+cmd_test_asan() {
+  start_services "$DISK_FUNCTIONAL"
+
+  local cpu_quota_bytes mem_bytes
+  cpu_quota_bytes=$(awk -v c="$CPU_APP" 'BEGIN{printf "%d", c*100000}')
+  mem_bytes=$(awk -v m="$APP_MEM" 'BEGIN{
+      if (m ~ /g$/) printf "%d", m*1024*1024*1024
+      else if (m ~ /m$/) printf "%d", m*1024*1024
+      else printf "%d", m*1024*1024 }')
+
+  set +e
+  docker run --rm --network "$NET" --cpus="$CPU_APP" --memory="$APP_MEM" \
+    -v "$ROOT":/src:ro \
+    -e TEST_DATABASE_URL="postgresql://shortener:shortener@sb_pg:5432/shortener" \
+    -e TEST_REDIS_URL="redis://sb_redis:6379/0" \
+    -e SANDBOX_EXPECT_CPU_QUOTA="$cpu_quota_bytes" \
+    -e SANDBOX_EXPECT_MEM_BYTES="$mem_bytes" \
+    -e SANDBOX_HOST_CPUS="$(nproc)" \
+    "$BUILDER" sh -c "
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+        gcc make libcriterion-dev libpq-dev libhiredis-dev pkg-config \
+        valgrind ca-certificates >/dev/null 2>&1
+      cp -r /src /build && cd /build
+      echo '--- ASan + UBSan ---'
+      make test-asan
+      asan_rc=\$?
+      echo
+      echo '--- Valgrind leak check on the plain test binaries ---'
+      vg_rc=0
+      make test >/dev/null 2>&1 || true
+      found=0
+      for t in build/test_*; do
+        [ -f \"\$t\" ] || continue
+        found=1
+        echo \"=== valgrind \$t\"
+        valgrind --leak-check=full --errors-for-leak-kinds=definite \
+                 --error-exitcode=42 --quiet \"\$t\" 2>&1 | tail -20 || vg_rc=1
+      done
+      [ \$found -eq 1 ] || { echo 'no test binaries built, valgrind pass is vacuous'; vg_rc=1; }
+      [ \$asan_rc -eq 0 ] && [ \$vg_rc -eq 0 ]
+    "
+  local rc=$?
+  set -e
+  teardown
+  return $rc
+}
+
 cmd_e2e() {
   MAKE_CMD="make test-e2e" run_in_builder "$DISK_FUNCTIONAL"
 }
@@ -248,6 +299,7 @@ case "${1:-}" in
   verify)    cmd_verify ;;
   test)      cmd_test ;;
   test-disk) cmd_test_disk ;;
+  test-asan) cmd_test_asan ;;
   e2e)       cmd_e2e ;;
   bench)     shift; cmd_bench "$@" ;;
   teardown)  cmd_teardown ;;
