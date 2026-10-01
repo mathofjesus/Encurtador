@@ -53,4 +53,8 @@ void buf_reset(buf_t *b);
  * only exists for handing the bytes to a C API that expects a string. */
 void buf_terminate(buf_t *b);
 
+/* Allocates a buffer into *out, storing NULL when allocation fails. Saves the
+ * three lines of check-then-assign that every caller would otherwise repeat. */
+void buf_new_into(buf_t **out, size_t cap);
+
 #endif /* UTIL_BUF_H */

@@ -230,7 +230,7 @@ cmd_test_asan() {
         valgrind ca-certificates >/dev/null 2>&1
       cp -r /src /build && cd /build
       echo '--- ASan + UBSan ---'
-      make test-asan
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 make test-asan
       asan_rc=\$?
       echo
       echo '--- Valgrind leak check on the plain test binaries ---'

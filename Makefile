@@ -19,7 +19,12 @@ LIB_OBJ  := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(LIB_SRC))
 TEST_SRC := $(shell find $(TEST_DIR) -name '*.c' 2>/dev/null)
 TEST_BIN := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%,$(TEST_SRC))
 
-ASAN_FLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer
+# -fno-sanitize-recover=all makes UBSan abort on the first report instead of
+# printing and continuing. Without it a runtime error prints a line and the run
+# still exits 0, which is how a one-byte body overflow passed as "SANITIZED
+# TESTS PASSED" once already.
+ASAN_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all \
+              -fno-omit-frame-pointer
 
 .PHONY: all build test test-asan test-e2e test-disk bench clean
 

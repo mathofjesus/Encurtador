@@ -186,3 +186,10 @@ void buf_terminate(buf_t *b)
     if (bi->alloc >= b->len)
         b->data[b->len] = '\0';
 }
+
+void buf_new_into(buf_t **out, size_t cap)
+{
+    if (!out)
+        return;
+    *out = buf_new(cap);
+}
