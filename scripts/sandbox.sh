@@ -11,6 +11,7 @@
 #   scripts/sandbox.sh verify       prove the caps are actually imposed
 #   scripts/sandbox.sh test         unit + integration tests (2 GB disk profile)
 #   scripts/sandbox.sh test-disk    retention demo (full 50 GB profile)
+#   scripts/sandbox.sh test-diskfull  fill the disk until writes fail (256 MB)
 #   scripts/sandbox.sh e2e          build image, run server + e2e over the network
 #   scripts/sandbox.sh bench        load test inside the capped sandbox
 #   scripts/sandbox.sh teardown     remove anything this script created
@@ -25,6 +26,18 @@ TARGET_CPUS="${SANDBOX_CPUS:-1}"
 TARGET_MEM="${SANDBOX_MEM:-4g}"
 DISK_FUNCTIONAL="${SANDBOX_DISK_FUNCTIONAL:-2g}"
 DISK_FULL="${SANDBOX_DISK_FULL:-50g}"
+# The disk-full demonstration fills Postgres until it refuses to write. Filling
+# 50 GB to prove that a 200 MB disk would also refuse it is a waste of an hour,
+# so it gets a small tmpfs of its own. Postgres's WAL is capped to match, since
+# a default 1 GB max_wal_size would not fit and the failure would be WAL's
+# rather than the table's. wal_level is left at the image default: the postgres
+# image sets max_wal_senders > 0, and asking for wal_level=minimal alongside it
+# is a fatal configuration error rather than a smaller WAL.
+DISK_FULL_TEST="${SANDBOX_DISK_FULL_TEST:-128m}"
+# min_wal_size must be at least twice the 16 MB WAL segment, which Postgres
+# enforces at startup and which would otherwise abort the container before it
+# ever accepts a connection.
+PG_ARGS_DISK_TEST='-c max_wal_size=64MB -c min_wal_size=32MB -c checkpoint_timeout=30s'
 
 NET=shortener_net
 PG=postgres:16-alpine
@@ -50,6 +63,25 @@ teardown() {
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 
+# Extra `postgres -c` settings for the current profile, set by a cmd_* before
+# it calls start_services. A global rather than a parameter because
+# run_in_builder's variadic arguments are environment variables for the build
+# container, and mixing the two meanings there would silently pass Postgres flags
+# to `docker run -e`.
+PG_ARGS_EXTRA=""
+
+# "2g"/"256m" to bytes, so a test can check the profile it is actually running
+# against instead of trusting the string it was handed.
+disk_bytes() {
+  awk -v d="$1" 'BEGIN{
+    n = d + 0
+    if (d ~ /[gG]$/) n = n * 1024*1024*1024
+    else if (d ~ /[mM]$/) n = n * 1024*1024
+    else if (d ~ /[kK]$/) n = n * 1024
+    printf "%d", n
+  }'
+}
+
 start_services() {
   local disk="$1"
   teardown
@@ -62,7 +94,7 @@ start_services() {
     -e POSTGRES_PASSWORD=shortener \
     -e POSTGRES_DB=shortener \
     "$PG" \
-    postgres -c shared_buffers=256MB -c max_connections=20 -c work_mem=4MB >/dev/null
+    postgres -c shared_buffers=256MB -c max_connections=20 -c work_mem=4MB $PG_ARGS_EXTRA >/dev/null
 
   docker run -d --rm --name sb_redis --network "$NET" \
     --cpus="$CPU_REDIS" --memory="$REDIS_MEM" \
@@ -182,6 +214,7 @@ run_in_builder() {
     -e TEST_REDIS_URL="redis://sb_redis:6379/0" \
     -e SANDBOX_EXPECT_CPU_QUOTA="$cpu_quota_bytes" \
     -e SANDBOX_EXPECT_MEM_BYTES="$mem_bytes" \
+    -e SANDBOX_DISK_BYTES="$(disk_bytes "$disk")" \
     -e SANDBOX_HOST_CPUS="$(nproc)" \
     "$BUILDER" sh -c "
       $INSTALL_DEPS
@@ -200,6 +233,14 @@ cmd_test() {
 cmd_test_disk() {
   echo "Running the full ${DISK_FULL} disk profile."
   MAKE_CMD="make test-disk" run_in_builder "$DISK_FULL"
+}
+
+# Fills Postgres until it refuses to write, against a tmpfs small enough to get
+# there in under a minute.
+cmd_test_diskfull() {
+  echo "Running the ${DISK_FULL_TEST} disk-full profile."
+  PG_ARGS_EXTRA="$PG_ARGS_DISK_TEST"
+  MAKE_CMD="make test-disk" run_in_builder "$DISK_FULL_TEST"
 }
 
 # Task 1 requires a leak check; Task 2 requires a sanitizer build. Valgrind is
@@ -239,6 +280,9 @@ cmd_test_asan() {
       found=0
       for t in build/test_*; do
         [ -f \"\$t\" ] || continue
+        # Fills the database on purpose; it belongs to the disk-full profile,
+        # and running it here would make every later valgrind pass meaningless.
+        case \"\$t\" in *test_disk_full) continue ;; esac
         found=1
         echo \"=== valgrind \$t\"
         valgrind --leak-check=full --errors-for-leak-kinds=definite \
@@ -299,6 +343,7 @@ case "${1:-}" in
   verify)    cmd_verify ;;
   test)      cmd_test ;;
   test-disk) cmd_test_disk ;;
+  test-diskfull) cmd_test_diskfull ;;
   test-asan) cmd_test_asan ;;
   e2e)       cmd_e2e ;;
   bench)     shift; cmd_bench "$@" ;;

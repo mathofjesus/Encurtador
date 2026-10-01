@@ -20,7 +20,7 @@ Test(config, loads_the_values_the_plan_pins)
     cr_assert_eq(c->database.max_overflow, 2);
 
     cr_assert_eq(c->cache.redis_ttl_seconds, 86400);
-    cr_assert_str_eq(c->cache.redis_url, "redis://shortener-redis:6379/0");
+    cr_assert_str_eq(c->cache.redis_url, "redis://sb_redis:6379/0");
 
     cr_assert_eq(c->codegen.min_length, 7);
     cr_assert_eq(c->codegen.max_length, 12);
@@ -54,9 +54,9 @@ Test(config, loads_from_an_explicit_environment_override)
     cr_assert_not_null(c);
 
     /* The file itself names the sandbox containers, which is what CI uses. */
-    cr_assert(strstr(c->database.primary_dsn, "shortener-pg") != NULL);
+    cr_assert(strstr(c->database.primary_dsn, "sb_pg") != NULL);
     cr_assert(strstr(c->database.primary_dsn, "shortener") != NULL);
-    cr_assert(strstr(c->cache.redis_url, "shortener-redis") != NULL);
+    cr_assert(strstr(c->cache.redis_url, "sb_redis") != NULL);
 
     config_free(c);
 }

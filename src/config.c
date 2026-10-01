@@ -16,14 +16,14 @@ static void config_set_defaults(config_t *c)
     snprintf(c->app.base_url, sizeof(c->app.base_url), "%s", "https://short.ly");
 
     snprintf(c->database.primary_dsn, sizeof(c->database.primary_dsn), "%s",
-             "postgresql://shortener:shortener@shortener-pg:5432/shortener");
+             "postgresql://shortener:shortener@sb_pg:5432/shortener");
     snprintf(c->database.replica_dsn, sizeof(c->database.replica_dsn), "%s",
-             "postgresql://shortener:shortener@shortener-pg:5432/shortener");
+             "postgresql://shortener:shortener@sb_pg:5432/shortener");
     c->database.pool_size = 2;
     c->database.max_overflow = 2;
 
     snprintf(c->cache.redis_url, sizeof(c->cache.redis_url), "%s",
-             "redis://shortener-redis:6379/0");
+             "redis://sb_redis:6379/0");
     c->cache.redis_ttl_seconds = 86400;
 
     c->codegen.min_length = 7;
@@ -224,6 +224,11 @@ config_t *config_load(const char *path)
         if (!indented && strchr(value, ':')) {
             char *colon = strchr(value, ':');
             *colon = '\0';
+            /* Refused rather than truncated: a name too long to hold is a
+             * malformed file, and a silently shortened one would simply never
+             * match a section. */
+            if (strlen(value) >= sizeof(section))
+                continue;
             snprintf(section, sizeof(section), "%s", value);
             continue;
         }
@@ -244,6 +249,8 @@ config_t *config_load(const char *path)
         char *key = value;
         while (*key == ' ' || *key == '\t')
             key++;
+        if (strlen(key) >= sizeof(pending_key))
+            continue;
 
         char *val = colon + 1;
         while (*val == ' ' || *val == '\t')

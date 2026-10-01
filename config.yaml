@@ -13,13 +13,13 @@ app:
 database:
   # Container names, because the sandbox puts postgres and the app on a shared
   # docker network. A local run overrides these with TEST_DATABASE_URL.
-  primary_dsn: "postgresql://shortener:shortener@shortener-pg:5432/shortener"
-  replica_dsn: "postgresql://shortener:shortener@shortener-pg:5432/shortener"
+  primary_dsn: "postgresql://shortener:shortener@sb_pg:5432/shortener"
+  replica_dsn: "postgresql://shortener:shortener@sb_pg:5432/shortener"
   pool_size: 2
   max_overflow: 2
 
 cache:
-  redis_url: "redis://shortener-redis:6379/0"
+  redis_url: "redis://sb_redis:6379/0"
   # 24 hours. Every entry carries a TTL, so the sandbox sets Redis to evict with
   # volatile-ttl: only keys that were going to expire anyway get dropped.
   redis_ttl_seconds: 86400
