@@ -58,16 +58,16 @@ $(BUILD_DIR)/%: $(TEST_DIR)/%.c $(LIB_OBJ) | $(BUILD_DIR)
 
 # Criterion runs each test in its own process, in parallel by default. Two
 # reasons these binaries are serial:
-#   - test_pg / test_redis / test_url_service / test_router share one Postgres
-#     and one Redis, and the last two drive both. In parallel they race on the
-#     same DDL (CREATE TABLE IF NOT EXISTS still loses that race — SQLSTATE
-#     42P01 and duplicate pg_class_relname_nsp_index), and a process per test at
-#     pool-of-2 blows past Postgres's max_connections of 20.
+#   - test_pg / test_redis / test_url_service / test_router / test_e2e share one
+#     Postgres and one Redis, and the last three drive both. In parallel they
+#     race on the same DDL (CREATE TABLE IF NOT EXISTS still loses that race —
+#     SQLSTATE 42P01 and duplicate pg_class_relname_nsp_index), and a process per
+#     test at pool-of-2 blows past Postgres's max_connections of 20.
 #   - test_reactor is timing-sensitive. Several processes polling on the same
 #     0.35-core share starve each other, and a poll budget that is generous alone
 #     becomes too short.
 TEST_SHARED := build/test_pg build/test_redis build/test_url_service \
-               build/test_router build/test_reactor
+               build/test_router build/test_e2e build/test_reactor
 
 test: $(TEST_BIN)
 	@if [ -z "$(strip $(TEST_BIN))" ]; then \
