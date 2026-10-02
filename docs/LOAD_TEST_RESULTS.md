@@ -146,6 +146,10 @@ At the required 100M URLs/day:
 history; the measured 1.4 makes it **~22× optimistic**, because 300 B/row ignored
 indexes, WAL and row overhead.
 
+Scaled the other way, the same 9,028 B/row puts 10 years of 100M/day at
+**365 billion rows and 3.3 PB** — which is the same fact as the 61,000× gap,
+and is why NFR-3's 36.5 TB cannot be reached by buying a bigger disk.
+
 ## Where each requirement lands
 
 | Requirement | Asks for | Measured | Met? |
@@ -153,14 +157,15 @@ indexes, WAL and row overhead.
 | NFR-1 · reads | 5,700/s (the figure the requirement's own arithmetic reaches) | 6,597/s warm, 1,812/s cold | Warm yes, cold no |
 | NFR-1 · writes | 1,157/s | 3,282/s | Yes, 2.8× |
 | NFR-2 · mixed | 90th pct < 100 ms | p99 624 µs | Yes, ~160× headroom |
-| NFR-3 · storage | 36.5 TB (10 yr) | 50 GB ≈ 5.9M rows | **No, 730× short** |
+| NFR-3 · storage | 36.5 TB (10 yr) | 50 GB ≈ 5.9M rows | **No, 730× short** (3.3 PB at the measured 9,028 B/row) |
 | NFR-4 · availability | 99.99% | single node, no failover | **No** |
 | NFR-5 · retention | 10 years | ~1.4 hours | **No, ~61,000× short** |
 
 **The disk and the bandwidth ceiling bind; the CPU does not.** Writes beat their
 requirement by 2.8×, and the mixed-workload p99 sits ~160× inside its budget.
-Storage is the requirement that fails hardest, and it fails by two orders of
-magnitude.
+Storage is the requirement that fails hardest: retention is short by five orders
+of magnitude, and the plan's own 36.5 TB figure turns out to have been ~90×
+optimistic about what 10 years of rows actually weighs.
 
 ### The read number, stated honestly
 
@@ -176,6 +181,29 @@ establish is the cache: the identical run against uncached codes does 1,812/s, s
 **a low cache hit rate is the single thing that breaks the read requirement**, and
 the original design assumed a hot cache without saying so. That assumption, not
 the CPU, is the load-bearing error.
+
+## What would actually be required
+
+Each unmet requirement, and what closes it. The numbers are what the requirement
+demands divided by what this machine delivers, not wishful sizing.
+
+| Requirement | Needed |
+|---|---|
+| NFR-1 · reads (cold) | 5,700/s cold instead of 1,812/s — **3.15×**. **Bandwidth, not CPU**: 8 TB/month egress instead of 4 TB. 4 TB/month divided by a 270 B redirect is 5,716/s; 8 TB is 11,431/s, which puts the read target above the cache-hit path this box can serve. |
+| NFR-1 · reads (warm) | Already met, by 16% — and ±10% run-to-run noise is 64% of that margin. Anything added to the request path can erase it. |
+| NFR-3 · storage | 36.5 TB assumes 100 B/row. Measured cost is 9,028 B/row, so 10 years of 100M/day is 365 billion rows and **3.3 PB, not 36.5 TB** — 90× worse than the plan's own estimate. |
+| NFR-4 · availability | 99.99% is 52 minutes of downtime a year. Impossible on one node with no failover. Needs a second node with a hot replica, and something in front that promotes it. |
+| NFR-5 · retention | 10 years needs 3.3 PB, which is 61,000× this disk. It also needs **tiering**: 90 days of hot URLs alone is 81 TB, so the recent set wants NVMe and everything older wants object storage behind it. |
+
+The interesting one is the last. 10-year retention is not really a database
+problem, it is a *tiering* problem: nobody reads a URL shortened eight years ago.
+Nothing in this codebase is wrong about retention — the cleanup job honours the
+policy exactly as configured (`--cleanup` removed 1 expired row, then 0 on a
+rerun) — but a single 50 GB NVMe cannot be the whole archive.
+
+Note what is *not* on this list: more CPU. Writes are already 2.8× past target
+and the p99 has two orders of magnitude of slack. A faster core would improve
+every number here and fix none of the four failures.
 
 ## What was deliberately not measured
 
