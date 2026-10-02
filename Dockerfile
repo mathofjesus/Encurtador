@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=build /src/bin/shortener /app/shortener
+COPY --from=build /src/bin/load_test /app/bin/load_test
 COPY --from=build /src/config.yaml /app/config.yaml
 COPY --from=build /src/src/db/schema.sql /app/src/db/schema.sql
 

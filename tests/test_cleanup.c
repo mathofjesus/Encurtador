@@ -250,7 +250,7 @@ Test(cleanup, url_service_invalidate_drops_one_entry_and_leaves_another)
 
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
     cr_assert_not_null(svc);
 
     warm(cache, "testinv01", "https://example.com/one");

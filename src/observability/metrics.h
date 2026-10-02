@@ -19,6 +19,8 @@ typedef enum {
     METRIC_SHORTEN_TOTAL,        /* URLs created */
     METRIC_REDIRECT_TOTAL,       /* redirects served */
     METRIC_REDIRECT_MISS_TOTAL,  /* redirects for an unknown or expired code */
+    METRIC_CACHE_HIT_TOTAL,      /* lookups answered from the cache */
+    METRIC_CACHE_MISS_TOTAL,     /* lookups the cache could not answer */
     METRIC_RATE_LIMITED_TOTAL,   /* requests refused by the limiter */
     METRIC_CLIENT_ERROR_TOTAL,   /* responses with a 4xx status */
     METRIC_SERVER_ERROR_TOTAL,   /* responses with a 5xx status */

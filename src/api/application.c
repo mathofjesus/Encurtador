@@ -119,7 +119,7 @@ application_t *application_new(const config_t *cfg, log_t *log)
     if (!a->rl)
         goto fail;
 
-    a->svc = url_service_new(a->pool, a->cache, &a->cfg);
+    a->svc = url_service_new(a->pool, a->cache, &a->cfg, a->metrics);
     if (!a->svc)
         goto fail;
 

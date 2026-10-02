@@ -14,6 +14,7 @@
 
 #include "codegen.h"
 #include "db/pg.h"
+#include "observability/metrics.h"
 #include "services/url_service.h"
 
 static const char *test_dsn(void)
@@ -112,7 +113,7 @@ Test(url_service, a_generated_code_is_the_configured_width_and_resolves)
     redis_client_t *cache = fresh_cache();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
     cr_assert_not_null(svc);
 
     char code[CODE_MAX_LENGTH + 1];
@@ -155,7 +156,7 @@ Test(url_service, a_client_chosen_code_is_stored_verbatim_and_resolves)
     wipe_codes();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     char code[CODE_MAX_LENGTH + 1];
     cr_assert_eq(url_service_create(svc, "https://example.com/custom", "testcust1",
@@ -182,7 +183,7 @@ Test(url_service, a_reused_custom_code_is_a_conflict)
     wipe_codes();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     char code[CODE_MAX_LENGTH + 1];
     cr_assert_eq(url_service_create(svc, "https://example.com/one", "testdup01", 1,
@@ -213,7 +214,7 @@ Test(url_service, an_unknown_code_is_not_found)
     redis_client_t *cache = fresh_cache();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     forget(cache, "testnope1");
     char url[PG_MAX_URL + 1];
@@ -231,7 +232,7 @@ Test(url_service, a_malformed_code_is_invalid_rather_than_not_found)
     redis_client_t *cache = fresh_cache();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     char url[PG_MAX_URL + 1];
     /* Too short, non-alphanumeric, and empty are client errors: 400, not 404.
@@ -253,7 +254,7 @@ Test(url_service, an_expired_url_is_not_found_even_though_the_row_exists)
     wipe_codes();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     /* Inserted behind the service's back with an expiry in the past. */
     cr_assert_eq(pg_create_url(pool, "testexp01", "https://example.com/dead",
@@ -278,7 +279,7 @@ Test(url_service, a_deleted_url_survives_only_as_long_as_the_cache_does)
     wipe_codes();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     char code[CODE_MAX_LENGTH + 1];
     cr_assert_eq(url_service_create(svc, "https://example.com/gone", "testdel01", 1,
@@ -312,7 +313,7 @@ Test(url_service, create_refuses_input_the_client_got_wrong)
     redis_client_t *cache = fresh_cache();
     config_t cfg;
     fill_config(&cfg);
-    url_service_t *svc = url_service_new(pool, cache, &cfg);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, NULL);
 
     char code[CODE_MAX_LENGTH + 1];
 
@@ -349,12 +350,12 @@ Test(url_service, a_service_without_a_pool_is_refused)
     config_t cfg;
     fill_config(&cfg);
 
-    cr_assert_null(url_service_new(NULL, cache, &cfg));
-    cr_assert_null(url_service_new(NULL, NULL, NULL));
+    cr_assert_null(url_service_new(NULL, cache, &cfg, NULL));
+    cr_assert_null(url_service_new(NULL, NULL, NULL, NULL));
 
     /* The cache, unlike the pool, is genuinely optional. */
     pg_pool_t *pool = fresh_pool();
-    url_service_t *svc = url_service_new(pool, NULL, &cfg);
+    url_service_t *svc = url_service_new(pool, NULL, &cfg, NULL);
     cr_assert_not_null(svc);
 
     /* With no cache the service must still answer from the database. */
@@ -375,4 +376,58 @@ Test(url_service, a_service_without_a_pool_is_refused)
 Test(url_service, freeing_null_is_safe)
 {
     url_service_free(NULL);
+}
+
+Test(url_service, cache_hits_and_misses_are_counted_separately)
+{
+    pg_pool_t *pool = fresh_pool();
+    redis_client_t *cache = fresh_cache();
+    config_t cfg;
+    fill_config(&cfg);
+    metrics_t *m = metrics_new();
+    cr_assert_not_null(m);
+    url_service_t *svc = url_service_new(pool, cache, &cfg, m);
+    cr_assert_not_null(svc);
+
+    /* Drop the entry create just cached, so the first lookup is a real miss. */
+    char code[CODE_MAX_LENGTH + 1];
+    cr_assert_eq(url_service_create(svc, "https://example.com/cold", NULL, 1, code,
+                                    sizeof(code)),
+                 URL_OK);
+    char key[64];
+    snprintf(key, sizeof(key), "url:%s", code);
+    cr_assert_eq(redis_invalidate(cache, key), REDIS_OK);
+
+    char url[PG_MAX_URL + 1];
+    cr_assert_eq(url_service_lookup(svc, code, url, sizeof(url), NULL), URL_OK);
+    cr_assert_eq(metrics_get(m, METRIC_CACHE_MISS_TOTAL), 1,
+                 "a lookup the cache could not answer is a miss");
+    cr_assert_eq(metrics_get(m, METRIC_CACHE_HIT_TOTAL), 0);
+
+    /* The miss populated the cache, so the second lookup of the same code is a
+     * hit. This is the distinction the load test needs: without it, a cold run
+     * and a warm one are only told apart by their latency. */
+    cr_assert_eq(url_service_lookup(svc, code, url, sizeof(url), NULL), URL_OK);
+    cr_assert_eq(metrics_get(m, METRIC_CACHE_HIT_TOTAL), 1);
+    cr_assert_eq(metrics_get(m, METRIC_CACHE_MISS_TOTAL), 1);
+
+    /* A 404 counts as a miss: the cache was consulted and could not answer. */
+    cr_assert_eq(url_service_lookup(svc, "nosuchcode", url, sizeof(url), NULL),
+                 URL_NOT_FOUND);
+    cr_assert_eq(metrics_get(m, METRIC_CACHE_MISS_TOTAL), 2);
+
+    /* With no cache at all, neither counter moves: there was no cache to ask. */
+    metrics_t *m2 = metrics_new();
+    url_service_t *bare = url_service_new(pool, NULL, &cfg, m2);
+    cr_assert_not_null(bare);
+    cr_assert_eq(url_service_lookup(bare, code, url, sizeof(url), NULL), URL_OK);
+    cr_assert_eq(metrics_get(m2, METRIC_CACHE_HIT_TOTAL), 0);
+    cr_assert_eq(metrics_get(m2, METRIC_CACHE_MISS_TOTAL), 0);
+
+    url_service_free(bare);
+    metrics_free(m2);
+    url_service_free(svc);
+    metrics_free(m);
+    redis_free(cache);
+    pg_pool_free(pool);
 }

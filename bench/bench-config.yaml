@@ -1,0 +1,44 @@
+# Config for the load test, not for serving.
+#
+# Identical to config.yaml except for the rate limiter, which is effectively
+# opened. Everything else — the pool size, the cache TTL, the retention
+# settings — is what the server really runs with, so a measurement here is a
+# measurement of the shipped configuration.
+#
+# Why the limiter is off: config.yaml allows 60 writes a minute with a burst of
+# 10. Under load the limiter refuses within the first few requests, and then the
+# benchmark measures 429s — the policy's answer rate, not the machine's
+# capacity. The limiter's own behaviour is tested in tests/test_rate_limit.c;
+# leaving it in place here would answer a question nobody asked. docs/
+# LOAD_TEST_RESULTS.md says which NFR the shipped limit serves.
+app:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+  base_url: "https://short.ly"
+
+database:
+  primary_dsn: "postgresql://shortener:shortener@sb_pg:5432/shortener"
+  replica_dsn: "postgresql://shortener:shortener@sb_pg:5432/shortener"
+  # Two connections against Postgres's own max_connections=20, because on one
+  # core a larger pool buys context switching rather than parallelism.
+  pool_size: 2
+  max_overflow: 2
+
+cache:
+  redis_url: "redis://sb_redis:6379/0"
+  redis_ttl_seconds: 86400
+
+codegen:
+  min_length: 7
+  max_length: 12
+
+rate_limit:
+  # High enough never to refuse during a run, not zero: the limiter is still
+  # constructed, so its cost per write is still in the measurement.
+  per_minute: 100000000
+  burst: 100000
+
+retention:
+  default_ttl_days: 3650
+  max_ttl_days: 3650

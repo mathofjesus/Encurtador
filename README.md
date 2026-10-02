@@ -57,6 +57,8 @@ sandbox:
 ./scripts/sandbox.sh test-asan# the same suite under ASan + UBSan
 ./scripts/sandbox.sh test-disk# full 50 GB profile
 ./scripts/sandbox.sh e2e      # the server answering a real client over a socket
+./scripts/sandbox.sh bench 30 # the four load scenarios; writes docs/LOAD_TEST_RESULTS.md's inputs
+./scripts/sandbox.sh test-diskfull  # fill the disk until Postgres refuses (retention)
 ./scripts/sandbox.sh teardown # remove the containers and the network
 ```
 

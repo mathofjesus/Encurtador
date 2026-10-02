@@ -301,24 +301,135 @@ cmd_e2e() {
   MAKE_CMD="make test-e2e" run_in_builder "$DISK_FUNCTIONAL"
 }
 
-cmd_bench() {
-  local duration="${1:-60}"
-  start_services "$DISK_FUNCTIONAL"
-  docker build -q -t shortener:test . >/dev/null
+# The published port, so the harness can read /metrics. The image has no curl and
+# no wget — it carries the two shared libraries and nothing else — so the scrape
+# happens from the host rather than by growing the image.
+BENCH_PORT="${SANDBOX_BENCH_PORT:-18000}"
 
-  # Server in its own container so the generator drives it over the network,
-  # sharing the same capped core.
+# Inserts count rows whose codes are known in advance, and writes the same list
+# where the generator can read it.
+#
+# Inserting them here rather than creating them over HTTP is what makes a "cold"
+# run cold: create is write-through, so a code obtained through the API is already
+# in the cache and its first read is a hit. The generator has no database access
+# and cannot flush Redis, so the only way to hand it genuinely cold codes is for
+# something that can write rows to put them there directly.
+seed_codes() {
+  local count="$1" prefix="$2"
+  docker exec sb_pg psql -q -U shortener -d shortener \
+    -c "DELETE FROM urls WHERE code LIKE '${prefix}%'" >/dev/null
+  docker exec sb_pg psql -q -U shortener -d shortener \
+    -c "INSERT INTO urls (code, url, expires_at)
+        SELECT '${prefix}' || lpad(i::text, 6, '0'),
+               'https://example.com/${prefix}/' || i,
+               now() + interval '30 days'
+        FROM generate_series(1, ${count}) i" >/dev/null
+  docker exec sb_app sh -c "seq -f '${prefix}%06g' 1 ${count} > /tmp/codes.txt"
+}
+
+# Reads one counter from the running server. Uses the published port rather than
+# exec, because the runtime image has no HTTP client.
+metric_host() {
+  curl -sf "http://127.0.0.1:${BENCH_PORT}/metrics" 2>/dev/null |
+    awk -v k="$1" '$1 == k { print $2 }'
+}
+
+# One scenario. Prints the generator's report followed by what the server counted
+# while it ran: the hit and miss totals are what make "cold" and "warm" claims
+# checkable instead of inferred from a latency number.
+run_scenario() {
+  local label="$1"; shift
+  local hits_before misses_before hits_after misses_after
+  hits_before="$(metric_host shortener_cache_hit_total)"
+  misses_before="$(metric_host shortener_cache_miss_total)"
+
+  echo
+  echo "=== $label"
+  docker exec sb_app ./bin/load_test --host 127.0.0.1 "$@" || return 1
+
+  hits_after="$(metric_host shortener_cache_hit_total)"
+  misses_after="$(metric_host shortener_cache_miss_total)"
+  echo "  server-side cache counters over this scenario:"
+  echo "    hits   $hits_before -> $hits_after  (+$((hits_after - hits_before)))"
+  echo "    misses $misses_before -> $misses_after  (+$((misses_after - misses_before)))"
+}
+
+cmd_bench() {
+  local duration="${1:-30}"
+  local codes="${SANDBOX_BENCH_CODES:-2000}"
+  start_services "$DISK_FUNCTIONAL"
+  # Not -q: a build failure here used to scroll past as a stream of layer
+  # names, and the benchmark then reported load-test results for an image that
+  # was never built. The build is part of what is being measured.
+  docker build -t shortener:test . >/dev/null || { teardown; return 1; }
+
+  # The generator runs *inside* the app container on purpose. It has to share the
+  # 0.35 vCPU the server is capped to, so the reported throughput is what both
+  # together sustained on the target machine and not what the server would do with
+  # a load generator on some other core.
+  # bench/bench-config.yaml replaces config.yaml for the run. It differs only in
+  # the rate limiter: at the shipped 60/minute a benchmark measures 429s, which is
+  # the policy's answer rate and not the machine's capacity.
   docker run -d --rm --name sb_app --network "$NET" \
     --cpus="$CPU_APP" --memory="$APP_MEM" \
+    -p "127.0.0.1:${BENCH_PORT}:8000" \
+    -v "$ROOT/bench/bench-config.yaml:/app/config.yaml:ro" \
     -e DATABASE_URL="postgresql://shortener:shortener@sb_pg:5432/shortener" \
     -e REDIS_URL="redis://sb_redis:6379/0" \
     shortener:test >/dev/null
 
-  sleep 2
-  set +e
-  docker exec sb_app ./bin/load_test --host 127.0.0.1 --threads 2 --duration "$duration"
-  local rc=$?
-  set -e
+  # Wait for the server, and fail loudly if it never comes up. Without the check
+  # the scenarios below each reported a load-test error and the run looked like a
+  # result rather than an outage.
+  local up=0
+  for _ in $(seq 1 60); do
+    if curl -sf "http://127.0.0.1:${BENCH_PORT}/health" >/dev/null 2>&1; then up=1; break; fi
+    sleep 1
+  done
+  if [ "$up" -ne 1 ]; then
+    echo "the server never answered /health; its last lines were:"
+    docker logs sb_app 2>&1 | tail -5
+    teardown
+    return 1
+  fi
+
+  local rc=0
+
+  # The schema is applied by the server at startup, so this is the first moment
+  # the urls table exists. Seeding before it would fail with "relation urls does
+  # not exist" — which is what happened before this wait.
+  if ! docker exec sb_pg psql -q -U shortener -d shortener \
+        -c "SELECT 1 FROM urls LIMIT 1" >/dev/null 2>&1; then
+    echo "the schema was not applied; the server reported:"
+    docker logs sb_app 2>&1 | tail -5
+    teardown
+    return 1
+  fi
+
+  # 1. Cold reads: every code read exactly once, none of them cached.
+  seed_codes "$codes" cold || rc=1
+  run_scenario "cold reads ($codes codes, one read each, nothing primed)" \
+    --codes-file /tmp/codes.txt --reads "$codes" --max-reads "$codes" \
+    --threads 1 --duration 600 || rc=1
+
+  # 2. Warm reads: the same codes, primed first. The difference between this and
+  #    the run above is what one Postgres round trip costs on this hardware.
+  seed_codes "$codes" warm || rc=1
+  run_scenario "warm reads (same shape, cache primed)" \
+    --codes-file /tmp/codes.txt --prime-passes 1 --reads "$codes" \
+    --max-reads "$codes" --threads 1 --duration 600 || rc=1
+
+  # 3. Writes only: an insert and a sequence per request.
+  run_scenario "writes only (inserts, cache write-through)" \
+    --warmup 0 --reads 0 --writes 1 --duration "$duration" --threads 1 || rc=1
+
+  # 4. Mixed at the ratio a shortener actually sees: many reads per write.
+  run_scenario "mixed 10:1 (10 reads + 1 write per cycle)" \
+    --warmup 500 --reads 10 --writes 1 --duration "$duration" --threads 2 || rc=1
+
+  echo
+  echo "Every figure above is a floor: the generator shared the app's 0.35 vCPU,"
+  echo "and Postgres shared 0.5 of the same single core."
   teardown
   return $rc
 }

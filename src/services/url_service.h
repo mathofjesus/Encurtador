@@ -18,6 +18,7 @@
 #include "cache/redis.h"
 #include "config.h"
 #include "db/pg.h"
+#include "observability/metrics.h"
 
 typedef struct url_service url_service_t;
 
@@ -37,10 +38,15 @@ typedef struct url_service url_service_t;
  * written down and handled rather than assumed. */
 #define URL_GENERATE_ATTEMPTS 5
 
-/* cache may be NULL (cache disabled or unavailable); pool and cfg are required.
- * The service does not own any of them. Returns NULL on invalid arguments. */
+/* cache and metrics may be NULL (cache disabled or unavailable, metrics
+ * disabled); pool and cfg are required. The service does not own any of them.
+ * Returns NULL on invalid arguments.
+ *
+ * metrics is borrowed, not owned, and is why cache hits are countable: the load
+ * test needs to tell a warm read from a cold one, and a latency number alone
+ * cannot say which path served it. */
 url_service_t *url_service_new(pg_pool_t *pool, redis_client_t *cache,
-                               const config_t *cfg);
+                               const config_t *cfg, metrics_t *metrics);
 
 /* Safe on NULL. Does not free the pool, cache or config. */
 void url_service_free(url_service_t *svc);

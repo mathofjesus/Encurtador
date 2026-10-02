@@ -13,9 +13,11 @@ ALL_CFLAGS  := $(CFLAGS) $(PKG_CFLAGS)
 
 SRC_DIR   := src
 TEST_DIR  := tests
+BENCH_DIR := bench
 BUILD_DIR := build
 BIN_DIR   := bin
 TARGET    := $(BIN_DIR)/shortener
+LOAD_TEST := $(BIN_DIR)/load_test
 
 MAIN_SRC := $(SRC_DIR)/main.c
 LIB_SRC  := $(shell find $(SRC_DIR) -name '*.c' ! -name 'main.c' 2>/dev/null)
@@ -40,10 +42,17 @@ ASAN_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all \
 
 all: build
 
-build: $(TARGET)
+build: $(TARGET) $(LOAD_TEST)
 
 $(TARGET): $(MAIN_SRC) $(LIB_OBJ) | $(BIN_DIR)
 	$(CC) $(ALL_CFLAGS) $(MAIN_SRC) $(LIB_OBJ) -o $@ $(LDFLAGS) $(APP_LIBS)
+
+# The generator links neither libpq nor hiredis. Sharing the server's libraries
+# would let a bug in them cancel out in the measurement instead of showing up in
+# it. It is built into the image so the sandbox can run it inside the app's
+# cgroup, sharing the 0.35 vCPU the server itself is capped to.
+$(LOAD_TEST): $(BENCH_DIR)/load_test.c | $(BIN_DIR)
+	$(CC) $(ALL_CFLAGS) $< -o $@ $(LDFLAGS) -lpthread
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)

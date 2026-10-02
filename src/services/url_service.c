@@ -20,10 +20,11 @@ struct url_service {
     pg_pool_t *pool;
     redis_client_t *cache; /* may be NULL */
     const config_t *cfg;
+    metrics_t *metrics;    /* borrowed, may be NULL */
 };
 
 url_service_t *url_service_new(pg_pool_t *pool, redis_client_t *cache,
-                               const config_t *cfg)
+                               const config_t *cfg, metrics_t *metrics)
 {
     /* A service without a database can do nothing; a service without a config
      * cannot decide expiries. The cache is genuinely optional. */
@@ -37,6 +38,7 @@ url_service_t *url_service_new(pg_pool_t *pool, redis_client_t *cache,
     svc->pool = pool;
     svc->cache = cache;
     svc->cfg = cfg;
+    svc->metrics = metrics;
     return svc;
 }
 
@@ -171,10 +173,13 @@ int url_service_lookup(url_service_t *svc, const char *code, char *out_url,
         char key[CACHE_KEY_MAX];
         cache_key(key, sizeof(key), code);
         int rc = redis_get(svc->cache, key, out_url, out_len);
-        if (rc == REDIS_OK)
+        if (rc == REDIS_OK) {
+            metrics_inc(svc->metrics, METRIC_CACHE_HIT_TOTAL);
             return URL_OK;
+        }
         /* Both MISS and ERROR fall through to the database. A broken cache
          * must look like a cold cache, never like a failure. */
+        metrics_inc(svc->metrics, METRIC_CACHE_MISS_TOTAL);
     }
 
     time_t expires = 0;

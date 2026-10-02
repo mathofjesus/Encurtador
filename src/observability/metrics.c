@@ -18,6 +18,10 @@ static const struct {
         {"shortener_redirect_total", "Redirects served"},
     [METRIC_REDIRECT_MISS_TOTAL] =
         {"shortener_redirect_miss_total", "Redirects for an unknown or expired code"},
+    [METRIC_CACHE_HIT_TOTAL] =
+        {"shortener_cache_hit_total", "Lookups answered from the cache"},
+    [METRIC_CACHE_MISS_TOTAL] =
+        {"shortener_cache_miss_total", "Lookups the cache could not answer"},
     [METRIC_RATE_LIMITED_TOTAL] =
         {"shortener_rate_limited_total", "Requests refused by the rate limiter"},
     [METRIC_CLIENT_ERROR_TOTAL] =

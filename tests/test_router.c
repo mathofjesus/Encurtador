@@ -68,8 +68,14 @@ static void fixture_up(fixture_t *f, int limiter_kind)
     f->cache = redis_init(rurl);
     cr_assert_not_null(f->cache);
 
+    /* Before the service and the router: both borrow the same registry, so a
+     * request that reaches the cache and the one that is counted as a redirect
+     * are measured against the same numbers. */
+    f->metrics = metrics_new();
+    cr_assert_not_null(f->metrics);
+
     fill_config(&f->cfg);
-    f->svc = url_service_new(f->pool, f->cache, &f->cfg);
+    f->svc = url_service_new(f->pool, f->cache, &f->cfg, f->metrics);
     cr_assert_not_null(f->svc);
 
     if (limiter_kind == 1)
@@ -79,7 +85,6 @@ static void fixture_up(fixture_t *f, int limiter_kind)
     else
         f->rl = NULL;
 
-    f->metrics = metrics_new();
     f->rt = router_new(f->svc, f->rl, &f->cfg, f->metrics);
     cr_assert_not_null(f->rt);
 }
