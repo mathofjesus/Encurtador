@@ -20,10 +20,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "api/application.h"
 #include "config.h"
+#include "db/pg.h"
 #include "net/reactor.h"
 #include "observability/log.h"
 
@@ -230,13 +232,21 @@ static int self_test_run(reactor_t *r, log_t *log)
 int main(int argc, char **argv)
 {
     int self_test = 0;
+    int cleanup = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--self-test") == 0) {
             self_test = 1;
+        } else if (strcmp(argv[i], "--cleanup") == 0) {
+            cleanup = 1;
         } else {
-            fprintf(stderr, "usage: %s [--self-test]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--self-test | --cleanup]\n", argv[0]);
             return 2;
         }
+    }
+
+    if (self_test && cleanup) {
+        fprintf(stderr, "shortener: --self-test and --cleanup are exclusive\n");
+        return 2;
     }
 
     const char *path = getenv("CONFIG_PATH");
@@ -257,6 +267,24 @@ int main(int argc, char **argv)
         log_free(log);
         config_free(cfg);
         return 1;
+    }
+
+    /* A retention sweep is a one-shot job, not a server: it deletes expired
+     * rows, invalidates them in the cache and exits, which is what a cron entry
+     * wants. It reuses the same application so the key format, the pool and the
+     * cache connection are the ones the server uses. */
+    if (cleanup) {
+        long deleted = 0;
+        int rc = application_cleanup(app, time(NULL), 0, &deleted);
+        if (rc != PG_OK)
+            fprintf(stderr, "shortener: cleanup failed\n");
+        else
+            printf("cleanup: %ld expired row(s) removed\n", deleted);
+
+        application_free(app);
+        log_free(log);
+        config_free(cfg);
+        return rc == PG_OK ? 0 : 1;
     }
 
     /* The self-test binds an ephemeral port so it can never collide with a real

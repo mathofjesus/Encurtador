@@ -9,6 +9,8 @@
 #ifndef API_APPLICATION_H
 #define API_APPLICATION_H
 
+#include <time.h>
+
 #include "config.h"
 #include "net/conn.h"
 #include "observability/log.h"
@@ -32,5 +34,13 @@ void application_free(application_t *a);
  * router, logging the outcome. Returns 0 to keep the connection open, -1 to
  * close it once the response drains. */
 int application_handle_conn(conn_t *c, void *user_data);
+
+/* Runs one retention sweep: deletes expired rows in batches and drops each
+ * deleted code from the cache, so a cache entry cannot outlive its row. This is
+ * what the --cleanup mode calls; it touches no socket. batch_size <= 0 means the
+ * job's default. Returns PG_OK or PG_ERROR, with the rows removed in
+ * *out_deleted. */
+int application_cleanup(application_t *a, time_t now, int batch_size,
+                        long *out_deleted);
 
 #endif /* API_APPLICATION_H */

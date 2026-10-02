@@ -76,9 +76,22 @@ int pg_code_exists(pg_pool_t *pool, const char *code, int *out_exists);
 int pg_lookup_url(pg_pool_t *pool, const char *code, char *out_url,
                   size_t out_len, time_t *out_expires_at);
 
-/* Deletes every row whose expires_at has passed. Writes the count to
- * out_deleted. Returns PG_OK or PG_ERROR. */
-int pg_cleanup_expired(pg_pool_t *pool, time_t now, long *out_deleted);
+/* Deletes up to limit expired rows in one statement and hands back their codes,
+ * so the caller can invalidate each one in the cache.
+ *
+ * Batched rather than one unbounded DELETE: a single DELETE of every expired row
+ * can hold a lock and a long transaction on a table that is still taking
+ * inserts, and on this hardware the sweep competes with serving. A short
+ * statement per batch keeps the interruption bounded.
+ *
+ * On PG_OK, *out_codes is a malloc'd array of *out_count NUL-terminated strings
+ * (each malloc'd), or NULL when *out_count is 0. Free it with pg_free_codes.
+ * Returns PG_OK or PG_ERROR. */
+int pg_delete_expired_batch(pg_pool_t *pool, time_t now, int limit,
+                            char ***out_codes, size_t *out_count);
+
+/* Frees the array pg_delete_expired_batch returned. Safe on NULL. */
+void pg_free_codes(char **codes, size_t count);
 
 /* Number of live connections currently checked out, and the pool's size.
  * Exposed so tests can prove the pool bounds concurrency rather than merely

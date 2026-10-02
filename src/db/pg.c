@@ -558,10 +558,14 @@ int pg_lookup_url(pg_pool_t *pool, const char *code, char *out_url,
     return rc;
 }
 
-int pg_cleanup_expired(pg_pool_t *pool, time_t now, long *out_deleted)
+int pg_delete_expired_batch(pg_pool_t *pool, time_t now, int limit,
+                            char ***out_codes, size_t *out_count)
 {
-    if (!pool)
+    if (!pool || !out_codes || !out_count || limit < 1)
         return PG_ERROR;
+
+    *out_codes = NULL;
+    *out_count = 0;
 
     PGconn *conn = checkout(pool);
     if (!conn)
@@ -569,27 +573,67 @@ int pg_cleanup_expired(pg_pool_t *pool, time_t now, long *out_deleted)
 
     char now_buf[32];
     snprintf(now_buf, sizeof(now_buf), "%lld", (long long)now);
-    const char *values[1] = {now_buf};
+    char limit_buf[16];
+    snprintf(limit_buf, sizeof(limit_buf), "%d", limit);
+    const char *values[2] = {now_buf, limit_buf};
 
-    /* expires_at IS NOT NULL matters: a URL with no expiry is not an expired
-     * URL, and without this guard every permanent row would be collected on the
-     * first sweep. */
+    /* The outer DELETE targets by id, which the sequence makes unique across
+     * every partition; the inner SELECT is what the partial index on expires_at
+     * serves. expires_at IS NOT NULL matters: a URL with no expiry is not an
+     * expired URL, and without this guard every permanent row would be collected
+     * on the first sweep. */
     PGresult *r = exec_params(pool, conn,
         "DELETE FROM urls "
-        " WHERE expires_at IS NOT NULL "
-        "   AND expires_at <= to_timestamp($1::double precision)",
-        1, values);
+        " WHERE id IN ("
+        "   SELECT id FROM urls "
+        "    WHERE expires_at IS NOT NULL "
+        "      AND expires_at <= to_timestamp($1::double precision) "
+        "    LIMIT $2::int) "
+        " RETURNING code",
+        2, values);
 
     int rc = PG_ERROR;
     if (r) {
-        if (PQresultStatus(r) == PGRES_COMMAND_OK) {
-            if (out_deleted)
-                *out_deleted = atol(PQcmdTuples(r));
-            rc = PG_OK;
+        if (PQresultStatus(r) == PGRES_TUPLES_OK) {
+            int n = PQntuples(r);
+            if (n == 0) {
+                rc = PG_OK; /* nothing left to collect */
+            } else {
+                char **codes = malloc((size_t)n * sizeof(*codes));
+                if (codes) {
+                    int i = 0;
+                    for (; i < n; i++) {
+                        codes[i] = strdup(PQgetvalue(r, i, 0));
+                        if (!codes[i])
+                            break; /* out of memory; report rather than lose codes */
+                    }
+                    if (i == n) {
+                        *out_codes = codes;
+                        *out_count = (size_t)n;
+                        rc = PG_OK;
+                    } else {
+                        /* Invalidation for the rows already deleted cannot be
+                         * skipped and cannot be done here, so dropping the
+                         * batch's codes on failure would leave stale entries.
+                         * The rows are gone regardless; the TTL is the backstop,
+                         * and a failed call makes the caller retry the sweep. */
+                        pg_free_codes(codes, (size_t)i);
+                    }
+                }
+            }
         }
         PQclear(r);
     }
 
     slot_release(pool, conn);
     return rc;
+}
+
+void pg_free_codes(char **codes, size_t count)
+{
+    if (!codes)
+        return;
+    for (size_t i = 0; i < count; i++)
+        free(codes[i]);
+    free(codes);
 }

@@ -66,4 +66,9 @@ int url_service_create(url_service_t *svc, const char *url, const char *custom_c
 int url_service_lookup(url_service_t *svc, const char *code, char *out_url,
                        size_t out_len, time_t *out_expires_at);
 
+/* Drops code from the cache. The cleanup job calls this after deleting an
+ * expired row, so a cache entry that outlived its row cannot keep answering for
+ * it. Safe on NULL svc, a NULL cache, and a NULL/empty code. */
+void url_service_invalidate(url_service_t *svc, const char *code);
+
 #endif /* SERVICES_URL_SERVICE_H */

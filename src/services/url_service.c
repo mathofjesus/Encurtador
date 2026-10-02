@@ -189,3 +189,16 @@ int url_service_lookup(url_service_t *svc, const char *code, char *out_url,
     cache_store(svc, code, out_url, expires, time(NULL));
     return URL_OK;
 }
+
+void url_service_invalidate(url_service_t *svc, const char *code)
+{
+    if (!svc || !svc->cache || !code || !*code)
+        return;
+
+    /* Best effort, like every cache write: a failure to invalidate leaves a
+     * stale entry that its own TTL will remove, which is better than a cleanup
+     * job that stops on a cache blip. */
+    char key[CACHE_KEY_MAX];
+    cache_key(key, sizeof(key), code);
+    (void)redis_invalidate(svc->cache, key);
+}

@@ -12,6 +12,7 @@
 #include "cache/redis.h"
 #include "db/pg.h"
 #include "http/parser.h"
+#include "jobs/cleanup.h"
 #include "observability/metrics.h"
 #include "services/rate_limit.h"
 #include "services/url_service.h"
@@ -214,4 +215,21 @@ int application_handle_conn(conn_t *c, void *user_data)
     buf_free(out);
     conn_consume(c, req.consumed);
     return rc;
+}
+
+/* The cache invalidation the cleanup job performs per deleted code. It goes
+ * through the URL service so the key format stays in one place. */
+static void invalidate_code(void *user_data, const char *code)
+{
+    url_service_invalidate((url_service_t *)user_data, code);
+}
+
+int application_cleanup(application_t *a, time_t now, int batch_size,
+                        long *out_deleted)
+{
+    if (!a)
+        return PG_ERROR;
+
+    return cleanup_run(a->pool, now, batch_size, invalidate_code, a->svc,
+                       out_deleted);
 }

@@ -1,0 +1,10 @@
+# Keep the build context to what the build reads. bin/ and build/ are rebuilt in
+# the image, and .git, the ledger and the load-test logs are not inputs.
+.git
+.gitignore
+build/
+bin/
+.superpowers/
+*.o
+*.log
+venv/

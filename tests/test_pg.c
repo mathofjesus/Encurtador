@@ -267,9 +267,20 @@ Test(pg, cleanup_removes_expired_rows_and_leaves_live_ones)
     cr_assert_eq(pg_create_url(pool, "testcln03", "https://example.com/forever",
                                0), PG_OK);
 
-    long deleted = -1;
-    cr_assert_eq(pg_cleanup_expired(pool, time(NULL), &deleted), PG_OK);
-    cr_assert_geq(deleted, 1, "the expired row should have gone");
+    char **codes = NULL;
+    size_t count = 0;
+    cr_assert_eq(pg_delete_expired_batch(pool, time(NULL), 100, &codes, &count),
+                 PG_OK);
+    cr_assert_eq(count, (size_t)1, "exactly the expired row should be removed");
+
+    /* The codes are why this delete returns rows rather than a count: the
+     * cleanup job invalidates each one in the cache. */
+    int found = 0;
+    for (size_t i = 0; i < count; i++)
+        if (strcmp(codes[i], "testcln02") == 0)
+            found = 1;
+    cr_assert(found, "the returned codes must name the deleted row");
+    pg_free_codes(codes, count);
 
     char url[PG_MAX_URL + 1];
     time_t expires = 0;
@@ -280,6 +291,15 @@ Test(pg, cleanup_removes_expired_rows_and_leaves_live_ones)
     /* No expiry at all is not the same as an expiry in the past. */
     cr_assert_eq(pg_lookup_url(pool, "testcln03", url, sizeof(url), &expires),
                  PG_OK, "a row with no expiry must never be collected");
+
+    /* A second sweep over the same data finds nothing: this is a delete, not a
+     * marker, so a rerun is safe. */
+    codes = NULL;
+    count = 0;
+    cr_assert_eq(pg_delete_expired_batch(pool, time(NULL), 100, &codes, &count),
+                 PG_OK);
+    cr_assert_eq(count, (size_t)0, "a rerun must not re-report deleted rows");
+    pg_free_codes(codes, count);
 
     wipe_codes(pool);
     pg_pool_free(pool);

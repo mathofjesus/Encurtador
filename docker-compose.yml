@@ -1,0 +1,79 @@
+# The same three processes the sandbox runs, with the same share of the target
+# machine: 0.5 + 0.15 + 0.35 = 1 vCPU, and 1g + 256m + 1g out of 4 GB.
+#
+# The CPU shares are the point, not decoration. Postgres gets half the only core
+# because it is the shared resource every request touches; Redis gets a seventh
+# because a cache hit still costs a socket round trip; the app gets the rest.
+# Under load these compete, which is why the throughput figure in
+# docs/LOAD_TEST_RESULTS.md is a single-core figure and not a "how fast can
+# Postgres go" figure.
+#
+# The volumes are named, not tmpfs. scripts/sandbox.sh puts Postgres on a
+# size-capped tmpfs so the disk-full behaviour is observable; here the point is a
+# process you can leave running, so the data outlives the container.
+services:
+  postgres:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=4MB
+    environment:
+      POSTGRES_USER: shortener
+      POSTGRES_PASSWORD: shortener
+      POSTGRES_DB: shortener
+    cpus: 0.5
+    mem_limit: 1g
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shortener -d shortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # volatile-ttl, not allkeys-lru: every cache entry carries a TTL, so under
+    # pressure only keys that were going to expire anyway are dropped. Evicting a
+    # live key would be a correctness loss disguised as a cache policy.
+    command:
+      - redis-server
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - volatile-ttl
+    cpus: 0.15
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # DATABASE_URL and REDIS_URL override config.yaml, whose DSNs name the
+    # sandbox's containers (sb_pg, sb_redis). Service names are what resolve here.
+    environment:
+      DATABASE_URL: postgresql://shortener:shortener@postgres:5432/shortener
+      REDIS_URL: redis://redis:6379/0
+      PORT: "8000"
+      LOG_LEVEL: info
+    cpus: 0.35
+    mem_limit: 1g
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
