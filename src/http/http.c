@@ -41,7 +41,9 @@ const char *http_status_text(int status)
 }
 
 void http_response_write(buf_t *out, int status, const char *content_type,
-                         const char *body, const char *location, int keep_alive)
+                         const char *body, const char *location,
+                         const char *extra_headers, int keep_alive,
+                         int head_only)
 {
     if (!out)
         return;
@@ -59,12 +61,22 @@ void http_response_write(buf_t *out, int status, const char *content_type,
     if (content_type)
         buf_appendf(out, "Content-Type: %s\r\n", content_type);
 
+    if (extra_headers)
+        buf_append_str(out, extra_headers);
+
     /* Always declared, even when zero: without it a client cannot tell an empty
      * 301 from a truncated one and will wait. */
     buf_appendf(out, "Content-Length: %zu\r\n", body_len);
 
     buf_appendf(out, "Connection: %s\r\n\r\n", keep_alive ? "keep-alive" : "close");
 
-    if (body_len > 0)
+    /* The length above is the length the equivalent GET would return; HEAD
+     * simply stops before sending it. */
+    if (body_len > 0 && !head_only)
         buf_append(out, body_text, body_len);
+
+    /* buf_append does not write a terminator. The reactor writes by length, but
+     * a caller reading the buffer as a string (the tests do) must not walk off
+     * the end. One spare byte is always reserved for exactly this. */
+    buf_terminate(out);
 }

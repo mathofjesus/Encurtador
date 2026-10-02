@@ -396,6 +396,115 @@ int pg_create_url(pg_pool_t *pool, const char *code, const char *url,
     return rc;
 }
 
+int pg_create_url_with_id(pg_pool_t *pool, unsigned long long id, const char *code,
+                          const char *url, time_t expires_at)
+{
+    if (!pool || !code || !url)
+        return PG_ERROR;
+    if (strlen(url) > PG_MAX_URL)
+        return PG_ERROR;
+    /* Generated codes are CODE_MIN_LENGTH long, which is above the custom
+     * minimum, so the custom validator accepts both. */
+    if (!code_is_valid_custom(code))
+        return PG_ERROR;
+
+    PGconn *conn = checkout(pool);
+    if (!conn)
+        return PG_ERROR;
+
+    char id_buf[32];
+    snprintf(id_buf, sizeof(id_buf), "%llu", id);
+
+    char expires_buf[32];
+    const char *values[4];
+    values[0] = id_buf;
+    values[1] = code;
+    values[2] = url;
+    if (expires_at == 0) {
+        values[3] = NULL;
+    } else {
+        snprintf(expires_buf, sizeof(expires_buf), "%lld", (long long)expires_at);
+        values[3] = expires_buf;
+    }
+
+    PGresult *r = exec_params(pool, conn,
+        "INSERT INTO urls (id, code, url, expires_at) "
+        "VALUES ($1::bigint, $2::varchar, $3::text, "
+        "        CASE WHEN $4::text IS NULL THEN NULL "
+        "             ELSE to_timestamp($4::double precision) END)",
+        4, values);
+
+    int rc = PG_ERROR;
+    if (r) {
+        ExecStatusType st = PQresultStatus(r);
+        if (st == PGRES_COMMAND_OK) {
+            rc = PG_OK;
+        } else if (sqlstate_is(r, SQLSTATE_UNIQUE_VIOLATION)) {
+            rc = 1;
+        }
+        PQclear(r);
+    }
+
+    slot_release(pool, conn);
+    return rc;
+}
+
+int pg_next_id(pg_pool_t *pool, unsigned long long *out_id)
+{
+    if (!pool || !out_id)
+        return PG_ERROR;
+
+    PGconn *conn = checkout(pool);
+    if (!conn)
+        return PG_ERROR;
+
+    /* The sequence, not a count. A count would race under concurrency and would
+     * reuse ids after a delete, which for a code that *is* the id means handing
+     * out a code that already resolves to a different URL. */
+    PGresult *r = PQexec(conn, "SELECT nextval('urls_id_seq')");
+
+    int rc = PG_ERROR;
+    if (r) {
+        if (PQresultStatus(r) == PGRES_TUPLES_OK && PQntuples(r) == 1)
+            rc = (*out_id = strtoull(PQgetvalue(r, 0, 0), NULL, 10),
+                  PG_OK);
+        PQclear(r);
+    }
+
+    slot_release(pool, conn);
+    return rc;
+}
+
+int pg_code_exists(pg_pool_t *pool, const char *code, int *out_exists)
+{
+    if (!pool || !code || !out_exists)
+        return PG_ERROR;
+
+    PGconn *conn = checkout(pool);
+    if (!conn)
+        return PG_ERROR;
+
+    const char *values[1] = {code};
+    /* Expiry is deliberately not filtered: a code that belonged to a row which
+     * has expired is still a code this table has used, and reissuing it would
+     * put the same code in two partitions — which the (code, created_at) index
+     * cannot prevent and lookup-by-code cannot disambiguate. */
+    PGresult *r = exec_params(pool, conn,
+        "SELECT 1 FROM urls WHERE code = $1::varchar LIMIT 1", 1, values);
+
+    int rc = PG_ERROR;
+    if (r) {
+        if (PQresultStatus(r) == PGRES_TUPLES_OK) {
+            *out_exists = PQntuples(r) > 0;
+            rc = PG_OK;
+        }
+        PQclear(r);
+    }
+
+    slot_release(pool, conn);
+    return rc;
+}
+
 int pg_lookup_url(pg_pool_t *pool, const char *code, char *out_url,
                   size_t out_len, time_t *out_expires_at)
 {

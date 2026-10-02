@@ -212,9 +212,9 @@ Test(http, response_301_carries_location)
     buf_new_into(&out, 64);
     cr_assert_not_null(out);
 
-    /* Signature is (out, status, content_type, body, location, keep_alive):
-     * a 301 has no body, so the URL goes in the location slot. */
-    http_response_write(out, 301, NULL, NULL, "https://example.com/x", 1);
+    /* A 301 has no body, so the URL goes in the location slot. */
+    http_response_write(out, 301, NULL, NULL, "https://example.com/x",
+                        NULL, 1, 0);
 
     char *s = (char *)out->data;
     cr_assert_not_null(strstr(s, "301 Moved Permanently"));
@@ -232,7 +232,8 @@ Test(http, response_201_is_json_with_body)
     buf_new_into(&out, 64);
     cr_assert_not_null(out);
 
-    http_response_write(out, 201, "application/json", "{\"code\":\"abc1234\"}", NULL, 1);
+    http_response_write(out, 201, "application/json", "{\"code\":\"abc1234\"}",
+                        NULL, NULL, 1, 0);
 
     char *s = (char *)out->data;
     cr_assert_not_null(strstr(s, "HTTP/1.1 201 Created"));
@@ -249,7 +250,7 @@ Test(http, response_without_keep_alive_says_close)
     buf_new_into(&out, 64);
     cr_assert_not_null(out);
 
-    http_response_write(out, 200, "text/plain", "ok", NULL, 0);
+    http_response_write(out, 200, "text/plain", "ok", NULL, NULL, 0, 0);
     cr_assert_not_null(strstr((char *)out->data, "Connection: close"));
 
     buf_free(out);

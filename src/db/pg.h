@@ -49,10 +49,25 @@ int pg_run_schema(pg_pool_t *pool);
  * A collision on a different created_at is NOT caught here: the unique index on
  * a partitioned table must include the partition key, so it enforces
  * (code, created_at) and not code alone. Keeping codes unique across partitions
- * is the caller's job, which is why pg_create_url accepts the code's owner to
- * check with. */
+ * is the caller's job; pg_code_exists is the tool for it. */
 int pg_create_url(pg_pool_t *pool, const char *code, const char *url,
                   time_t expires_at);
+
+/* Inserts one URL with a caller-assigned id, so a generated code can be the
+ * base62 rendering of that id and the two never drift apart. The id must come
+ * from pg_next_id; inventing one collides with the sequence's own future
+ * values. Same return codes as pg_create_url. */
+int pg_create_url_with_id(pg_pool_t *pool, unsigned long long id, const char *code,
+                          const char *url, time_t expires_at);
+
+/* Next value of urls_id_seq, which is the id a generated code encodes.
+ * Returns PG_OK or PG_ERROR. */
+int pg_next_id(pg_pool_t *pool, unsigned long long *out_id);
+
+/* Whether any row, expired or not, already uses code. The caller uses this to
+ * keep client-chosen codes unique across partitions, which the
+ * (code, created_at) index cannot do on its own. Returns PG_OK or PG_ERROR. */
+int pg_code_exists(pg_pool_t *pool, const char *code, int *out_exists);
 
 /* Looks up a live URL. Returns PG_OK and fills out_url (NUL-terminated) and
  * out_expires_at, PG_NOT_FOUND for an unknown code or one whose expires_at has

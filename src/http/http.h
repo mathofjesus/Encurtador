@@ -60,10 +60,23 @@ void http_request_init(http_request_t *r);
 /* Releases anything the request owns and returns it to the init state. */
 void http_request_reset(http_request_t *r);
 
-/* Serialises a response into out. location is written as a Location header and
- * ignored when NULL; body may be NULL for a zero-length response. */
+/* Serialises a response into out.
+ *
+ * location is written as a Location header and ignored when NULL; body may be
+ * NULL for a zero-length response.
+ *
+ * extra_headers is NULL or one or more complete CRLF-terminated header lines,
+ * appended after the standard ones. It exists for headers whose presence
+ * depends on the outcome, such as Retry-After on a 429. It is built by this
+ * program from values it controls and is never copied from the request.
+ *
+ * head_only declares the true Content-Length but writes no body, which is what
+ * a response to HEAD must do: the client learns the length it would have
+ * received without the bytes being sent. */
 void http_response_write(buf_t *out, int status, const char *content_type,
-                         const char *body, const char *location, int keep_alive);
+                         const char *body, const char *location,
+                         const char *extra_headers, int keep_alive,
+                         int head_only);
 
 /* Reason phrase for a status code. Never returns NULL: an unknown code yields
  * "Unknown", because this string goes straight into the status line. */
