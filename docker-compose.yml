@@ -3,7 +3,8 @@ services:
     build: .
     restart: always
     env_file:
-      - .env
+      - path: .env
+        required: false
     expose:
       - "5000"
 
