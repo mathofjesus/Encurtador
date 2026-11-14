@@ -11,13 +11,18 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import psycopg
-from flask import Flask, request, redirect, abort, jsonify
+from flask import Flask, request, redirect, abort, jsonify, send_from_directory
 from flask_cors import CORS
 from psycopg_pool import ConnectionPool
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # ─── Configuração ────────────────────────────────────────────────────
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="frontend")
+
+# Suporte a Proxy Reverso (Nginx no Lightsail ou balanceador)
+# Garante que request.host_url e scheme (http/https) reflitam o domínio público
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Variáveis obrigatórias — falham explicitamente na inicialização
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -30,11 +35,14 @@ if not SECRET_KEY:
     print("ERRO FATAL: Defina a variável de ambiente ENCURTADOR_KEY.", file=sys.stderr)
     sys.exit(1)
 
-# Origem do frontend na Vercel — CORS restrito (nunca "*")
-FRONTEND_ORIGIN = os.environ.get(
-    "FRONTEND_ORIGIN", "https://<SEU-PROJETO>.vercel.app"
-)
-CORS(app, origins=[FRONTEND_ORIGIN])
+# Configuração de CORS flexível
+# Permite '*', lista separada por vírgula ou origem específica
+frontend_origin_env = os.environ.get("FRONTEND_ORIGIN", "*")
+if frontend_origin_env == "*":
+    CORS(app, resources={r"/*": {"origins": "*"}})
+else:
+    origins = [o.strip() for o in frontend_origin_env.split(",") if o.strip()]
+    CORS(app, origins=origins)
 
 # ─── Pool de conexões ────────────────────────────────────────────────
 # Por que pool em vez de conexão por requisição?
@@ -148,9 +156,15 @@ def init_db_command():
 
 # ─── Rotas ───────────────────────────────────────────────────────────
 
+@app.get("/")
+def index():
+    """Serve a interface web do encurtador caso o Nginx não esteja servindo diretamente."""
+    return send_from_directory("frontend", "index.html")
+
+
 @app.get("/health")
 def health():
-    """Health check para Railway e outros monitores."""
+    """Health check para Lightsail, Railway e outros monitores."""
     return jsonify(status="ok"), 200
 
 

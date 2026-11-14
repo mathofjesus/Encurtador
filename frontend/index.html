@@ -131,11 +131,16 @@
 
   <script>
     // ╔═══════════════════════════════════════════════════════════════╗
-    // ║  CONFIGURAÇÃO — substitua pela URL pública do seu backend    ║
-    // ║  após o deploy na Railway.                                   ║
-    // ║  Exemplo: "https://encurtador-production-xxxx.up.railway.app"║
+    // ║  CONFIGURAÇÃO — Detecção Automática de Domínio                ║
+    // ║  - No Lightsail (Nginx ou Flask no mesmo host): usa ""       ║
+    // ║  - Na Vercel: substitua pela URL do backend Lightsail         ║
     // ╚═══════════════════════════════════════════════════════════════╝
-    const API_BASE_URL = "https://encurtador-production-039ce749.up.railway.app";
+    const REMOTE_BACKEND_URL = "https://<SEU-DOMINIO-OU-IP-LIGHTSAIL>";
+
+    // Se estiver na Vercel, consome a API remota; no Lightsail/local, usa rota relativa
+    const API_BASE_URL = window.location.origin.includes("vercel.app")
+      ? REMOTE_BACKEND_URL
+      : "";
 
     const form      = document.getElementById("form");
     const input     = document.getElementById("url");

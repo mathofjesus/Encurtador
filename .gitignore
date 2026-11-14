@@ -37,4 +37,6 @@ desktop.ini
 # Logs
 *.log
 .vercel
-.env*
+.env
+.env.*
+!.env.example
