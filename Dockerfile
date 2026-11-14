@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 # Evita arquivos .pyc e força flush imediato de logs
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -6,15 +6,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Instala dependências
+# Instala dependências de compilação mínimas para Alpine (libpq e headers se necessário)
+RUN apk add --no-cache libpq libstdc++
+
+# Instala dependências do Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia todo o código da aplicação
 COPY . .
 
-# Executa com usuário não-root por segurança
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Cria e executa com usuário não-root por segurança no Alpine
+RUN adduser -D appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 5000
