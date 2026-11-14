@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Encurtador de Links</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f5f7;
+      display: flex;
+      justify-content: center;
+      padding: 3rem 1rem;
+      min-height: 100vh;
+    }
+
+    main {
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+      width: 100%;
+      max-width: 560px;
+      align-self: flex-start;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1.25rem;
+      color: #1e293b;
+    }
+
+    form {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    input[type="url"] {
+      flex: 1;
+      padding: 0.7rem 0.9rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input[type="url"]:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+
+    button.encurtar {
+      padding: 0.7rem 1.2rem;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+
+    button.encurtar:hover { background: #1d4ed8; }
+    button.encurtar:disabled { background: #94a3b8; cursor: default; }
+
+    #resultado {
+      margin-top: 1.5rem;
+    }
+
+    #resultado a {
+      word-break: break-all;
+      color: #2563eb;
+      font-weight: 500;
+      font-size: 1.05rem;
+      text-decoration: none;
+    }
+
+    #resultado a:hover { text-decoration: underline; }
+
+    .info {
+      margin-top: 0.4rem;
+      color: #64748b;
+      font-size: 0.85rem;
+    }
+
+    button.copiar {
+      margin-top: 0.75rem;
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      background: #475569;
+      color: #fff;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button.copiar:hover { background: #334155; }
+
+    .erro {
+      color: #b91c1c;
+      margin-top: 1rem;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>🔗 Encurtador de Links</h1>
+
+    <form id="form">
+      <input
+        type="url"
+        id="url"
+        placeholder="https://exemplo.com/uma/url/muito/longa"
+        required
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <button type="submit" id="botao" class="encurtar">Encurtar</button>
+    </form>
+
+    <div id="resultado"></div>
+    <div id="erro" class="erro"></div>
+  </main>
+
+  <script>
+    // ╔═══════════════════════════════════════════════════════════════╗
+    // ║  CONFIGURAÇÃO — substitua pela URL pública do seu backend    ║
+    // ║  após o deploy na Railway.                                   ║
+    // ║  Exemplo: "https://encurtador-production-xxxx.up.railway.app"║
+    // ╚═══════════════════════════════════════════════════════════════╝
+    const API_BASE_URL = "https://<SEU-APP>.up.railway.app";
+
+    const form      = document.getElementById("form");
+    const input     = document.getElementById("url");
+    const botao     = document.getElementById("botao");
+    const resultado = document.getElementById("resultado");
+    const erro      = document.getElementById("erro");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      erro.textContent = "";
+      resultado.innerHTML = "";
+      botao.disabled = true;
+
+      try {
+        const resp = await fetch(`${API_BASE_URL}/shorten`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: input.value.trim() }),
+        });
+
+        const dados = await resp.json();
+
+        if (!resp.ok) {
+          erro.textContent = dados.error || "Erro ao encurtar o link.";
+          return;
+        }
+
+        // Link encurtado
+        const link = document.createElement("a");
+        link.href = dados.short_url;
+        link.textContent = dados.short_url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+
+        // Data de expiração formatada em pt-BR
+        const info = document.createElement("p");
+        info.className = "info";
+        const expira = new Date(dados.expires_at);
+        info.textContent =
+          `⏳ Expira em: ${expira.toLocaleDateString("pt-BR")} ` +
+          `às ${expira.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+
+        // Botão copiar com feedback visual
+        const copiar = document.createElement("button");
+        copiar.textContent = "📋 Copiar link";
+        copiar.className = "copiar";
+        copiar.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(dados.short_url);
+            copiar.textContent = "✅ Copiado!";
+          } catch {
+            copiar.textContent = "❌ Falha ao copiar";
+          }
+          setTimeout(() => { copiar.textContent = "📋 Copiar link"; }, 2000);
+        });
+
+        resultado.append(link, info, document.createElement("br"), copiar);
+
+      } catch (err) {
+        erro.textContent = "Não foi possível conectar ao servidor.";
+      } finally {
+        botao.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

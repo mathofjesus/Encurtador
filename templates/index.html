@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Encurtador de Links</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f4f5f7;
+      display: flex;
+      justify-content: center;
+      padding: 3rem 1rem;
+      margin: 0;
+    }
+    main {
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+      width: 100%;
+      max-width: 560px;
+    }
+    h1 { margin-top: 0; font-size: 1.5rem; }
+    form { display: flex; gap: 0.5rem; }
+    input[type="url"] {
+      flex: 1;
+      padding: 0.7rem;
+      border: 1px solid #ccd;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    button {
+      padding: 0.7rem 1.2rem;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:disabled { background: #94a3b8; cursor: default; }
+    #resultado { margin-top: 1.5rem; }
+    #resultado a { word-break: break-all; }
+    .erro { color: #b91c1c; margin-top: 1rem; }
+    .copiar { margin-top: 0.5rem; background: #475569; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Encurtador de Links</h1>
+
+    <form id="form">
+      <input type="url" id="url" placeholder="https://exemplo.com/um/link/muito/longo" required>
+      <button type="submit" id="botao">Encurtar</button>
+    </form>
+
+    <div id="resultado"></div>
+    <div id="erro" class="erro"></div>
+  </main>
+
+  <script>
+    const form = document.getElementById("form");
+    const input = document.getElementById("url");
+    const botao = document.getElementById("botao");
+    const resultado = document.getElementById("resultado");
+    const erro = document.getElementById("erro");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      erro.textContent = "";
+      resultado.innerHTML = "";
+      botao.disabled = true;
+
+      try {
+        const resposta = await fetch("/shorten", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: input.value.trim() }),
+        });
+        const dados = await resposta.json();
+
+        if (!resposta.ok) {
+          erro.textContent = dados.error || "Erro ao encurtar o link.";
+          return;
+        }
+
+        const link = document.createElement("a");
+        link.href = dados.short_url;
+        link.textContent = dados.short_url;
+        link.target = "_blank";
+
+        const copiar = document.createElement("button");
+        copiar.textContent = "Copiar";
+        copiar.className = "copiar";
+        copiar.addEventListener("click", () => {
+          navigator.clipboard.writeText(dados.short_url);
+          copiar.textContent = "Copiado!";
+        });
+
+        resultado.append(link, document.createElement("br"), copiar);
+      } catch (err) {
+        erro.textContent = "Não foi possível conectar ao servidor.";
+      } finally {
+        botao.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

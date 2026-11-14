@@ -1,38 +1,87 @@
+"""
+Encurtador de Links — Backend Flask
+Deploy: Railway (gunicorn -w 2 -b 0.0.0.0:$PORT app:app)
+"""
+
 import hashlib
 import hmac
 import os
-import sqlite3
 import string
+import sys
+from datetime import datetime, timedelta, timezone
+
+import psycopg
 from flask import Flask, request, redirect, abort, jsonify
+from flask_cors import CORS
+from psycopg_pool import ConnectionPool
+
+# ─── Configuração ────────────────────────────────────────────────────
 
 app = Flask(__name__)
-DB_PATH = "encurtador.db"
 
-# Alfabeto base62: 0-9, a-z, A-Z
+# Variáveis obrigatórias — falham explicitamente na inicialização
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    print("ERRO FATAL: Defina a variável de ambiente DATABASE_URL.", file=sys.stderr)
+    sys.exit(1)
+
+SECRET_KEY = os.environ.get("ENCURTADOR_KEY", "").encode("utf-8")
+if not SECRET_KEY:
+    print("ERRO FATAL: Defina a variável de ambiente ENCURTADOR_KEY.", file=sys.stderr)
+    sys.exit(1)
+
+# Origem do frontend na Vercel — CORS restrito (nunca "*")
+FRONTEND_ORIGIN = os.environ.get(
+    "FRONTEND_ORIGIN", "https://<SEU-PROJETO>.vercel.app"
+)
+CORS(app, origins=[FRONTEND_ORIGIN])
+
+# ─── Pool de conexões ────────────────────────────────────────────────
+# Por que pool em vez de conexão por requisição?
+#   - Evita overhead de TLS + autenticação a cada request.
+#   - Com 2 workers Gunicorn, min=1/max=5 por worker é suficiente.
+#   - prepare_threshold=None é OBRIGATÓRIO para Supabase transaction pooler
+#     (Supavisor, porta 6543) — sem isso psycopg usa prepared statements
+#     que o pooler rejeita com erros de protocolo.
+pool = ConnectionPool(
+    conninfo=DATABASE_URL,
+    min_size=1,
+    max_size=5,
+    kwargs={"prepare_threshold": None},
+)
+
+# ─── Constantes Feistel / Base62 ─────────────────────────────────────
+
 BASE62 = string.digits + string.ascii_lowercase + string.ascii_uppercase
-CODE_LEN =  7
+CODE_LEN = 7
 
-# Domínio de  40 bits: 2⁴0 = 1,1 trilhão de IDs, mais que os 3,65 x 10^11
-# previstos em 10 anos. Cabe em 7 caracteres base 62 (62^7 = 3,5 x 10^12).
+# Domínio de 40 bits: 2^40 ≈ 1,1 trilhão de IDs
+# Cabe em 7 caracteres base62 (62^7 ≈ 3,5 trilhões).
+# Em 10 anos a 100M/dia = 365 bilhões de IDs — dentro do domínio.
 HALF_BITS = 20
 MASK = (1 << HALF_BITS) - 1
 DOMAIN_SIZE = 1 << (2 * HALF_BITS)
 ROUNDS = 6
 
-SECRET_KEY = os.environ.get("ENCURTADOR_KEY", "").encode("utf-8")
-if not SECRET_KEY:
-    raise RuntimeError("Defina a variavel de ambiente ENCURTADOR_KEY antes de iniciar.")
+LINK_TTL_DAYS = 30
+
+
+# ─── Feistel (preservada integralmente) ─────────────────────────────
 
 def _round_fn(half: int, rnd: int) -> int:
-    """Função de rodada: HMAC da metade com a a chave secreta, truncado a 20 bits."""
-    digest = hmac.new(SECRET_KEY, f"{rnd}:{half}".encode("utf-8"), hashlib.sha256).digest()
+    """Função de rodada: HMAC da metade com a chave secreta, truncado a 20 bits."""
+    digest = hmac.new(
+        SECRET_KEY, f"{rnd}:{half}".encode("utf-8"), hashlib.sha256
+    ).digest()
     return int.from_bytes(digest[:8], "big") & MASK
+
 
 def feistel_encrypt(n: int) -> int:
     left, right = n >> HALF_BITS, n & MASK
     for rnd in range(ROUNDS):
-        left, right = right, left ^_round_fn(right, rnd)
+        left, right = right, left ^ _round_fn(right, rnd)
     return (left << HALF_BITS) | right
+
 
 def feistel_decrypt(n: int) -> int:
     left, right = n >> HALF_BITS, n & MASK
@@ -40,7 +89,9 @@ def feistel_decrypt(n: int) -> int:
         left, right = right ^ _round_fn(left, rnd), left
     return (left << HALF_BITS) | right
 
-# --- Base62 com largura fixa ---
+
+# ─── Base62 com largura fixa (preservada integralmente) ──────────────
+
 def encode(num: int) -> str:
     chars = []
     for _ in range(CODE_LEN):
@@ -62,6 +113,7 @@ def decode(code: str) -> int:
 def id_to_code(row_id: int) -> str:
     return encode(feistel_encrypt(row_id))
 
+
 def code_to_id(code: str) -> int:
     value = decode(code)
     if value >= DOMAIN_SIZE:
@@ -69,26 +121,38 @@ def code_to_id(code: str) -> int:
     return feistel_decrypt(value)
 
 
-# --- Banco ---
+# ─── Inicialização do banco (comando CLI, não na importação) ─────────
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db() -> None:
-    with get_db() as db:
-        db.execute("""
+@app.cli.command("init-db")
+def init_db_command():
+    """Cria a tabela urls e o índice se não existirem.
+    Use: flask init-db
+    Só precisa ser executado uma vez (ou o SQL do schema.sql via Supabase).
+    """
+    with pool.connection() as conn:
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS urls (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                original_url TEXT    NOT NULL,
-                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id           BIGSERIAL    PRIMARY KEY,
+                original_url TEXT         NOT NULL,
+                created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+                expires_at   TIMESTAMPTZ  NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_urls_expires_at
+            ON urls (expires_at)
+        """)
+        conn.commit()
+    print("Banco inicializado com sucesso.")
 
 
-# --- Rotas ---
+# ─── Rotas ───────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    """Health check para Railway e outros monitores."""
+    return jsonify(status="ok"), 200
+
 
 @app.post("/shorten")
 def shorten():
@@ -98,15 +162,31 @@ def shorten():
     if not url.startswith(("http://", "https://")):
         return jsonify(error="URL inválida. Deve começar com http:// ou https://"), 400
 
-    with get_db() as db:
-        cur = db.execute("INSERT INTO urls (original_url) VALUES (?)", (url,))
-        row_id = cur.lastrowid
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=LINK_TTL_DAYS)
+
+    with pool.connection() as conn:
+        # RETURNING id: obtém o BIGSERIAL gerado sem lastrowid (psycopg3 / PostgreSQL)
+        row = conn.execute(
+            """INSERT INTO urls (original_url, created_at, expires_at)
+               VALUES (%s, %s, %s)
+               RETURNING id""",
+            (url, now, expires_at),
+        ).fetchone()
+        conn.commit()
+
+    row_id = row[0]
 
     if row_id >= DOMAIN_SIZE:
         return jsonify(error="Capacidade de códigos esgotada"), 507
 
     code = id_to_code(row_id)
-    return jsonify(short_url=f"{request.host_url}{code}", code=code), 201
+    return jsonify(
+        code=code,
+        short_url=f"{request.host_url}{code}",
+        expires_at=expires_at.isoformat(),
+    ), 201
+
 
 @app.get("/<code>")
 def resolve(code: str):
@@ -115,18 +195,28 @@ def resolve(code: str):
     except ValueError:
         abort(404)
 
-    with get_db() as db:
-        row = db.execute(
-            "SELECT original_url FROM urls WHERE id = ?", (row_id,)
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT original_url, expires_at FROM urls WHERE id = %s",
+            (row_id,),
         ).fetchone()
 
     if row is None:
         abort(404)
 
-    # 302: o navegador sempre passa pelo servidor, o que permite contar acessos.
-    return redirect(row["original_url"], code=302)
+    original_url, expires_at = row
 
+    if expires_at < datetime.now(timezone.utc):
+        # 410 Gone: o recurso existiu mas não está mais disponível
+        return jsonify(error="Este link expirou e não está mais disponível."), 410
+
+    # 302: o navegador sempre passa pelo servidor (permite contar acessos futuramente)
+    return redirect(original_url, code=302)
+
+
+# ─── Desenvolvimento local ────────────────────────────────────────────
 
 if __name__ == "__main__":
-    init_db()
+    # Em produção, o Gunicorn ignora este bloco.
+    # Debug=True apenas em ambiente de desenvolvimento.
     app.run(debug=True, port=5000)
