@@ -1,42 +1,31 @@
-# Banco local (SQLite — não mais usado em produção)
-encurtador.db
+# Dependências
+node_modules/
 
-# Python
+# Builds
+dist/
+coverage/
+
+# Python (legado — remover quando não houver mais resquícios)
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
 .venv/
 venv/
-env/
-.Python
 
 # Variáveis de ambiente
 .env
 .env.local
-.env.production
-.env.development
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*.sublime-project
-*.sublime-workspace
+.env.*
+!.env.example
 
 # Vercel
 frontend/.vercel/
 .vercel/
 
-# OS
+# IDE / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
-desktop.ini
 
 # Logs
 *.log
-.vercel
-.env
-.env.*
-!.env.example

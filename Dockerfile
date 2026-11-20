@@ -1,26 +1,37 @@
-FROM python:3.12-alpine
+# ─── Dependências (cache de camada) ───────────────────────────────────
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY server/package.json server/package.json
+COPY web/package.json web/package.json
+RUN npm ci
 
-# Evita arquivos .pyc e força flush imediato de logs
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# ─── Build (API + frontend) ───────────────────────────────────────────
+FROM deps AS build
+WORKDIR /app
+COPY tsconfig.base.json ./
+COPY server server
+COPY web web
+RUN npm run build
 
+# ─── Runtime ──────────────────────────────────────────────────────────
+FROM node:24-alpine AS runtime
+ENV NODE_ENV=production \
+    PORT=5000
 WORKDIR /app
 
-# Instala dependências de compilação mínimas para Alpine (libpq e headers se necessário)
-RUN apk add --no-cache libpq libstdc++
+COPY package.json package-lock.json ./
+COPY server/package.json server/package.json
+COPY web/package.json web/package.json
+RUN npm ci --omit=dev && npm cache clean --force
 
-# Instala dependências do Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=build /app/server/dist server/dist
+COPY --from=build /app/web/dist web/dist
 
-# Copia todo o código da aplicação
-COPY . .
-
-# Cria e executa com usuário não-root por segurança no Alpine
-RUN adduser -D appuser && chown -R appuser:appuser /app
-USER appuser
+# Mesmo usuário não-root do Node (uid 1000)
+USER node
 
 EXPOSE 5000
 
-# Gunicorn com 2 workers, escutando em todas as interfaces na porta 5000
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+# Processo único: escala por réplicas do Compose, não por workers.
+CMD ["node", "server/dist/server.js"]
