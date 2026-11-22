@@ -8,10 +8,9 @@ import hmac
 import os
 import string
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-import psycopg
-from flask import Flask, request, redirect, abort, jsonify, send_from_directory
+from flask import Flask, abort, jsonify, redirect, request, send_from_directory
 from flask_cors import CORS
 from psycopg_pool import ConnectionPool
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -30,7 +29,7 @@ if not DATABASE_URL:
     print("ERRO FATAL: Defina a variável de ambiente DATABASE_URL.", file=sys.stderr)
     sys.exit(1)
 
-SECRET_KEY = os.environ.get("ENCURTADOR_KEY", "").encode("utf-8")
+SECRET_KEY = os.environ.get("ENCURTADOR_KEY", "").encode()
 if not SECRET_KEY:
     print("ERRO FATAL: Defina a variável de ambiente ENCURTADOR_KEY.", file=sys.stderr)
     sys.exit(1)
@@ -79,7 +78,7 @@ LINK_TTL_DAYS = 30
 def _round_fn(half: int, rnd: int) -> int:
     """Função de rodada: HMAC da metade com a chave secreta, truncado a 20 bits."""
     digest = hmac.new(
-        SECRET_KEY, f"{rnd}:{half}".encode("utf-8"), hashlib.sha256
+        SECRET_KEY, f"{rnd}:{half}".encode(), hashlib.sha256
     ).digest()
     return int.from_bytes(digest[:8], "big") & MASK
 
@@ -176,7 +175,7 @@ def shorten():
     if not url.startswith(("http://", "https://")):
         return jsonify(error="URL inválida. Deve começar com http:// ou https://"), 400
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = now + timedelta(days=LINK_TTL_DAYS)
 
     with pool.connection() as conn:
@@ -220,7 +219,7 @@ def resolve(code: str):
 
     original_url, expires_at = row
 
-    if expires_at < datetime.now(timezone.utc):
+    if expires_at < datetime.now(UTC):
         # 410 Gone: o recurso existiu mas não está mais disponível
         return jsonify(error="Este link expirou e não está mais disponível."), 410
 
