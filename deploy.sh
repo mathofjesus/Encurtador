@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Script de Deploy e Atualização — VPS (Debian + Docker Compose)
+# Script de Deploy e Atualização — Hostinger VPS (Debian + Docker Compose + Alpine)
 # Execução: ./deploy.sh
-set -euo pipefail
 
-echo "=== [1/4] Verificando Docker e Docker Compose ==="
-if ! command -v docker &>/dev/null; then
+set -e
+
+echo "=== [1/4] Verificando Docker e Docker Compose no Debian ==="
+if ! command -v docker &> /dev/null; then
     echo "Docker não encontrado. Instalando no Debian..."
-    apt-get update && apt-get install -y docker.io docker-compose-v2 git curl
+    apt-get update && apt-get install -y docker.io docker-compose-v2 git
 fi
 
 echo "=== [2/4] Verificando arquivo .env ==="
@@ -18,25 +19,14 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-echo "=== [3/4] Atualizando código e construindo imagens ==="
+echo "=== [3/4] Atualizando código e construindo imagens Alpine ==="
 git pull origin main || echo "Aviso: git pull não executado ou já atualizado."
 docker compose down || true
 docker compose up -d --build
 
-echo "=== [4/4] Aguardando health check ==="
-for _ in $(seq 1 30); do
-    if curl -fsS http://localhost/health >/dev/null 2>&1; then
-        break
-    fi
-    sleep 2
-done
-
-if ! curl -fsS http://localhost/health >/dev/null 2>&1; then
-    echo "ERRO: /health não respondeu. Logs:"
-    docker compose logs --tail=50 app
-    exit 1
-fi
-
+echo "=== [4/4] Status dos containers Alpine ==="
 docker compose ps
+
 echo ""
-echo "✅ Aplicação em execução com sucesso!"
+echo "✅ Aplicação em execução com sucesso na Hostinger VPS!"
+echo "Teste com: curl -I http://localhost/health"

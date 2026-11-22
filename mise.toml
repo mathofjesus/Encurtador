@@ -1,2 +1,2 @@
-[tools]
-node = "24"
+[settings]
+python.github_attestations = false

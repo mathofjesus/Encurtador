@@ -1,35 +1,21 @@
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     restart: always
     env_file:
       - path: .env
         required: false
     expose:
       - "5000"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:5000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
-        ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   nginx:
-    build:
-      context: .
-      dockerfile: web/Dockerfile.nginx
+    image: nginx:alpine
     restart: always
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
     depends_on:
-      app:
-        condition: service_started
+      - app
