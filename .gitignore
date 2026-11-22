@@ -1,23 +1,33 @@
-# Banco local (SQLite — não mais usado em produção)
+# ── Banco local (SQLite — não mais usado em produção) ──────────────────
 encurtador.db
 
-# Python
+# ── Python ─────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 *.pyd
+.Python
 .venv/
 venv/
 env/
-.Python
 
-# Variáveis de ambiente
+# Empacotamento
+*.egg-info/
+dist/
+build/
+
+# ── Ferramentas de qualidade / CI ──────────────────────────────────────
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Variáveis de ambiente ───────────────────────────────────────────────
 .env
-.env.local
-.env.production
-.env.development
+.env.*
+!.env.example
 
-# IDE
+# ── IDE / Editor ────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
@@ -25,18 +35,14 @@ env/
 *.sublime-project
 *.sublime-workspace
 
-# Vercel
+# ── Vercel ──────────────────────────────────────────────────────────────
 frontend/.vercel/
 .vercel/
 
-# OS
+# ── OS ──────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Logs
+# ── Logs ────────────────────────────────────────────────────────────────
 *.log
-.vercel
-.env
-.env.*
-!.env.example

@@ -1,0 +1,31 @@
+name: Cleanup — Remove URLs Expiradas
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # Todo dia às 03:00 UTC
+  workflow_dispatch:        # Permite execução manual na aba Actions
+
+jobs:
+  cleanup:
+    name: Remover URLs expiradas do banco
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "psycopg[binary]==3.2.6"
+
+      - name: Run cleanup script
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python cleanup.py
